@@ -1,0 +1,46 @@
+name: Deploy portfolio via s3 + EC2 Docker
+
+on:
+    push:
+        branches:
+        - main
+
+jobs:
+    upload-to-s3:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v3
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v2
+              with:
+                aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                aws-region: ${{ secrets.AWS_REGION }}
+
+            - name: Sync files to S3 bucket
+              run: |
+                aws s3 sync . s3://${{ secrets.S3_BUCKET_NAME }}
+
+    deploy-to-ec2:
+        needs: upload-to-s3
+        runs-on: ubuntu-latest
+        steps:
+            - name: pull from s3 & rebuild containers on Ec2
+              uses: appleboy/ssh-action@v0.1.5
+              with:
+                host: ${{ secrets.EC2_HOST }}
+                username: ${{ secrets.EC2_USER }}
+                key: ${{ secrets.EC2_SSH_KEY }}
+                script: |
+                  rm -rf /home/ubuntu/portfolio/*
+                  mkdir -p /home/ubuntu/portfolio
+                  aws s3 sync s3://${{ secrets.S3_BUCKET_NAME }} /home/ubuntu/portfolio
+                  cd /home/ubuntu/portfolio
+                  docker build -t mynewproject:latest .
+                  docker rm -f portal1 portal2 portal3 || true
+                  docker run -d -p 8081:80 --name portal1 mynewproject:latest
+                  docker run -d -p 8082:80 --name portal2 mynewproject:latest
+                  docker run -d -p 8083:80 --name portal3 mynewproject:latest
+
